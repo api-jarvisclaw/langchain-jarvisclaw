@@ -21,11 +21,11 @@ classifiers = [
 dependencies = [
     "langchain-openai>=0.3.0",
     "httpx>=0.25.0",
-    "eth-account>=0.11.0",
+    "jarvisclaw>=0.1.0",
 ]
 
 [project.optional-dependencies]
-solana = ["solders>=0.21.0"]
+solana = ["jarvisclaw[solana]>=0.1.0"]
 
 [project.urls]
 Homepage = "https://jarvisclaw.ai"

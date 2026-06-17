@@ -2,25 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import time
 from typing import Any, Optional
 
 import httpx
 from langchain_openai import ChatOpenAI
-
-# Lazy imports for wallet signing (only needed in x402 mode)
-_eth_account = None
-
-
-def _get_eth_account():
-    global _eth_account
-    if _eth_account is None:
-        from eth_account import Account
-        from eth_account.messages import encode_defunct
-
-        _eth_account = (Account, encode_defunct)
-    return _eth_account
 
 
 class ChatJarvisClaw(ChatOpenAI):
@@ -29,6 +14,9 @@ class ChatJarvisClaw(ChatOpenAI):
     Supports two authentication modes:
     1. API Key (traditional): pass `api_key="sk-..."`
     2. x402 Wallet Payment: pass `wallet_private_key="0x..."` to pay per-request with USDC
+
+    x402 mode uses the `jarvisclaw` Python SDK under the hood, which handles
+    the full payment flow: request → 402 → sign EIP-3009 USDC transfer → retry.
 
     Examples:
         # Mode 1: API Key (pre-paid balance)
@@ -43,7 +31,7 @@ class ChatJarvisClaw(ChatOpenAI):
 
     base_url: str = "https://api.jarvisclaw.ai/v1"
     wallet_private_key: Optional[str] = None
-    network: str = "eip155:8453"  # Base mainnet
+    network: str = "base"  # "base" or "solana"
     _x402_max_retries: int = 2
 
     class Config:
@@ -58,104 +46,48 @@ class ChatJarvisClaw(ChatOpenAI):
         super().__init__(**kwargs)
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        """Override to handle 402 Payment Required responses."""
+        """Override to handle x402 payment mode via jarvisclaw SDK."""
         if not self.wallet_private_key:
             # Standard API key mode — just call parent
             return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
-        # x402 mode: attempt request, handle 402, sign payment, retry
-        for attempt in range(self._x402_max_retries + 1):
-            try:
-                return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
-            except Exception as e:
-                if not self._is_402_error(e) or attempt >= self._x402_max_retries:
-                    raise
-                # Extract 402 payment requirements and sign
-                payment_info = self._extract_402_info(e)
-                if payment_info:
-                    signature = self._sign_x402_payment(payment_info)
-                    # Inject payment signature into headers for next attempt
-                    self._inject_payment_header(signature)
+        # x402 mode: delegate to jarvisclaw SDK which handles the full
+        # 402 → sign → retry flow with proper EIP-3009 USDC authorization
+        from jarvisclaw import Client as JCClient
 
-        return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+        jc = JCClient(private_key=self.wallet_private_key, chain=self.network)
 
-    def _is_402_error(self, error: Exception) -> bool:
-        """Check if the error is an HTTP 402 Payment Required."""
-        error_str = str(error)
-        return "402" in error_str or "Payment Required" in error_str
+        # Convert LangChain messages to OpenAI format
+        formatted_messages = self._convert_messages(messages)
 
-    def _extract_402_info(self, error: Exception) -> Optional[dict]:
-        """Extract payment requirements from a 402 response."""
-        # Try to get the response body from the error
-        try:
-            # Make a direct HTTP request to get the full 402 response
-            url = f"{self.base_url}/chat/completions"
-            response = httpx.post(
-                url,
-                json={"model": self.model_name, "messages": [{"role": "user", "content": "ping"}], "max_tokens": 1},
-                timeout=10.0,
-            )
-            if response.status_code == 402:
-                import json
-                return json.loads(response.text)
-        except Exception:
-            pass
-        return None
+        response = jc.chat.completions.create(
+            model=self.model_name,
+            messages=formatted_messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            stream=False,
+            **{k: v for k, v in kwargs.items() if k not in ("stop", "run_manager")},
+        )
 
-    def _sign_x402_payment(self, payment_info: dict) -> str:
-        """Sign an x402 payment using the wallet private key."""
-        Account, encode_defunct = _get_eth_account()
+        # Convert jarvisclaw SDK response back to LangChain format
+        from langchain_core.messages import AIMessage
+        from langchain_core.outputs import ChatGeneration, ChatResult
 
-        accepts = payment_info.get("accepts", [])
-        if not accepts:
-            raise ValueError("No payment options in 402 response")
+        content = response.choices[0].message.content or ""
+        generation = ChatGeneration(message=AIMessage(content=content))
+        return ChatResult(generations=[generation])
 
-        # Pick first matching network
-        payment_option = None
-        for opt in accepts:
-            if opt.get("network") == self.network:
-                payment_option = opt
-                break
-        if not payment_option:
-            payment_option = accepts[0]
-
-        # Build the payment message to sign
-        amount = payment_option.get("amount", "0")
-        pay_to = payment_option.get("payTo", "")
-        resource_url = payment_info.get("resource", {}).get("url", "")
-
-        # x402 payment signature: sign(amount + payTo + resource + timestamp)
-        timestamp = str(int(time.time()))
-        message_hash = hashlib.sha256(
-            f"{amount}:{pay_to}:{resource_url}:{timestamp}".encode()
-        ).hexdigest()
-
-        msg = encode_defunct(text=message_hash)
-        account = Account.from_key(self.wallet_private_key)
-        signed = account.sign_message(msg)
-
-        # Return formatted x402 payment signature
-        import json
-        return json.dumps({
-            "scheme": payment_option.get("scheme", "exact"),
-            "network": payment_option.get("network", self.network),
-            "amount": amount,
-            "payTo": pay_to,
-            "signature": signed.signature.hex(),
-            "signer": account.address,
-            "timestamp": timestamp,
-        })
-
-    def _inject_payment_header(self, signature: str) -> None:
-        """Inject PAYMENT-SIGNATURE header into the HTTP client."""
-        if hasattr(self, "client") and self.client:
-            # Access the underlying httpx client
-            if hasattr(self.client, "_client"):
-                self.client._client.headers["PAYMENT-SIGNATURE"] = signature
-            self.default_headers = {
-                **(self.default_headers or {}),
-                "PAYMENT-SIGNATURE": signature,
-            }
+    def _convert_messages(self, messages) -> list[dict]:
+        """Convert LangChain message objects to OpenAI dict format."""
+        result = []
+        for msg in messages:
+            if hasattr(msg, "type"):
+                role_map = {"human": "user", "ai": "assistant", "system": "system"}
+                role = role_map.get(msg.type, msg.type)
+            else:
+                role = "user"
+            result.append({"role": role, "content": msg.content})
+        return result
 
     # ─── Convenience Methods ─────────────────────────────────────────────
 
