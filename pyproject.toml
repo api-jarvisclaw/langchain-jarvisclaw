@@ -1,0 +1,33 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "langchain-jarvisclaw"
+version = "0.1.0"
+description = "LangChain integration for JarvisClaw AI API (x402 USDC payments supported)"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.9"
+authors = [{ name = "JarvisClaw", email = "support@jarvisclaw.ai" }]
+keywords = ["langchain", "jarvisclaw", "x402", "ai", "usdc", "crypto", "agent"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = [
+    "langchain-openai>=0.3.0",
+    "httpx>=0.25.0",
+    "eth-account>=0.11.0",
+]
+
+[project.optional-dependencies]
+solana = ["solders>=0.21.0"]
+
+[project.urls]
+Homepage = "https://jarvisclaw.ai"
+Documentation = "https://docs.jarvisclaw.ai"
+Repository = "https://github.com/api-jarvisclaw/langchain-jarvisclaw"
