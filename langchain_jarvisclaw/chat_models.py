@@ -51,11 +51,22 @@ class ChatJarvisClaw(ChatOpenAI):
             # Standard API key mode — just call parent
             return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
 
-        # x402 mode: delegate to jarvisclaw SDK which handles the full
-        # 402 → sign → retry flow with proper EIP-3009 USDC authorization
-        from jarvisclaw import Client as JCClient
+        # x402 mode: delegate to the jarvisclaw SDK, which handles the full
+        # 402 → sign → retry flow with proper EIP-3009 USDC authorization.
+        #
+        # This imported `Client` and passed `chain=`. Neither exists: the SDK has never
+        # exported a bare `Client` (checked against every release from 1.1.0 to 3.1.2 —
+        # it is per-capability, `ChatClient`/`ImageClient`/…, plus the OpenAI-compatible
+        # shim used here), and the constructor parameter is `network`, not `chain`. So
+        # every call on this branch raised ImportError before reaching the gateway,
+        # meaning wallet mode has never worked in a released version of this package.
+        # The API-key branch above was unaffected, which is why it went unnoticed.
+        #
+        # jarvisclaw.OpenAI is the right target rather than ChatClient: it exposes
+        # exactly the chat.completions.create surface this method already calls.
+        from jarvisclaw import OpenAI as JCClient
 
-        jc = JCClient(private_key=self.wallet_private_key, chain=self.network)
+        jc = JCClient(private_key=self.wallet_private_key, network=self.network)
 
         # Convert LangChain messages to OpenAI format
         formatted_messages = self._convert_messages(messages)

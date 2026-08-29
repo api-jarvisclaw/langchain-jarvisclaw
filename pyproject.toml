@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "langchain-jarvisclaw"
-version = "0.1.0"
+version = "0.1.1"
 description = "LangChain integration for JarvisClaw AI API (x402 USDC payments supported)"
 readme = "README.md"
 license = "MIT"
@@ -21,13 +21,20 @@ classifiers = [
 dependencies = [
     "langchain-openai>=0.3.0",
     "httpx>=0.25.0",
-    "jarvisclaw>=0.1.0",
+    # >=3.0 because the wallet path uses jarvisclaw.OpenAI with `network=`. The old
+    # >=0.1.0 floor was wide enough to resolve a 0.1.x release that has neither, so
+    # pip could satisfy this package with an SDK it cannot actually call.
+    "jarvisclaw>=3.0.0",
 ]
 
 [project.optional-dependencies]
-solana = ["jarvisclaw[solana]>=0.1.0"]
+solana = ["jarvisclaw[solana]>=3.1.0"]
+dev = ["pytest"]
 
 [project.urls]
 Homepage = "https://jarvisclaw.ai"
 Documentation = "https://docs.jarvisclaw.ai"
 Repository = "https://github.com/api-jarvisclaw/langchain-jarvisclaw"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
