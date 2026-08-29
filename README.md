@@ -1,12 +1,17 @@
 # langchain-jarvisclaw
 
-LangChain integration for [JarvisClaw](https://jarvisclaw.ai) AI API — 40+ models, pay-per-request with USDC via x402.
+LangChain integration for [JarvisClaw](https://jarvisclaw.ai) AI API — 280+ models, pay-per-request with USDC via x402.
 
 ## Install
 
 ```bash
 pip install langchain-jarvisclaw
 ```
+
+> **Wallet mode requires 0.1.1 or later.** In 0.1.0, passing `wallet_private_key`
+> raised `ImportError` — it imported a name the jarvisclaw SDK does not export, so the
+> x402 path never ran. API-key mode was unaffected. If you are pinned to 0.1.0 and
+> using a wallet, upgrade.
 
 ## Usage
 
